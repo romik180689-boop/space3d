@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>3D Космический Шутер</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: black; font-family: 'Segoe UI', sans-serif; }
+        #ui { position: absolute; top: 20px; left: 20px; color: #00ffcc; font-size: 24px; font-weight: bold; text-shadow: 0 0 10px #00ffcc; user-select: none; z-index: 10; }
+        #timer { position: absolute; top: 20px; right: 20px; color: #ffcc00; font-size: 24px; font-weight: bold; text-shadow: 0 0 10px #ffcc00; z-index: 10; }
+        #shop-btn { position: absolute; top: 60px; left: 20px; padding: 10px 20px; background: #81b64c; border: none; border-radius: 8px; color: white; font-weight: bold; cursor: pointer; z-index: 10; }
+        
+        #shop { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(26, 26, 26, 0.95); padding: 30px; border-radius: 20px; border: 3px solid #81b64c; display: none; z-index: 20; text-align: center; width: 400px; }
+        #shop h2 { color: #00ffcc; margin-top: 0; }
+        .skin-card { display: flex; justify-content: space-between; align-items: center; padding: 15px; margin-bottom: 10px; background: #333; border-radius: 10px; border: 1px solid #555; }
+        .skin-card span { color: white; font-size: 18px; font-weight: bold; }
+        .skin-card button { padding: 8px 15px; background: #00ffcc; border: none; border-radius: 5px; font-weight: bold; cursor: pointer; color: black; }
+        .skin-card button.owned { background: #555; color: #aaa; cursor: default; }
+        
+        #game-over { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; font-size: 40px; display: none; text-align: center; background: rgba(0,0,0,0.9); padding: 40px; border-radius: 20px; border: 3px solid #ff5555; z-index: 30; }
+        canvas { display: block; }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+    <div id="ui">Кристаллы: <span id="score">0</span></div>
+    <div id="timer">Время: <span id="time">60</span>с</div>
+    <button id="shop-btn" onclick="toggleShop()">🛒 Магазин</button>
+
+    <div id="shop">
+        <h2>Магазин скинов</h2>
+        <div class="skin-card"><span>🟢 Классический</span><button class="owned" id="btn-default">Куплен</button></div>
+        <div class="skin-card"><span>🔴 Огненный (10 💎)</span><button id="btn-fire" onclick="buySkin('fire', 10)">Купить</button></div>
+        <div class="skin-card"><span>🔵 Ледяной (25 💎)</span><button id="btn-ice" onclick="buySkin('ice', 25)">Купить</button></div>
+        <button onclick="toggleShop()" style="margin-top: 20px; padding: 10px; background: transparent; border: 1px solid #555; color: white; cursor: pointer; width: 100%; border-radius: 8px;">Закрыть</button>
+    </div>
+
+    <div id="game-over">
+        <h1 style="margin:0; color:#ff5555;">Ты врезался в астероид!</h1>
+        <p style="font-size:24px;">Собрано за игру: <span id="final-score">0</span></p>
+        <p style="font-size:18px; color:#aaa;">Всего кристаллов: <span id="total-score">0</span></p>
+        <button onclick="location.reload()" style="padding:15px 30px; font-size:20px; cursor:pointer; background:#00ffcc; border:none; border-radius:10px; font-weight:bold; margin-top:10px;">Играть снова</button>
+    </div>
+
+    <script>
+        let totalCrystals = parseInt(localStorage.getItem('totalCrystals')) || 0;
+        let currentSkin = localStorage.getItem('currentSkin') || 'default';
+        document.getElementById('score').innerText = totalCrystals;
+
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x000000, 0.02); // Туман для глубины
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 2, 8); // Камера сзади и чуть сверху
+        camera.lookAt(0, 0, -10); // Смотрим вдаль
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // Свет
+        const ambientLight = new THREE.AmbientLight(0x404040, 2);
+        scene.add(ambientLight);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+        dirLight.position.set(0, 10, 10);
+        scene.add(dirLight);
+
+        // --- КОРАБЛЬ (СОСТОИТ ИЗ ДЕТАЛЕЙ) ---
+        const shipGroup = new THREE.Group();
+        
+        // Корпус (цилиндр)
+        const bodyGeo = new THREE.CylinderGeometry(0.2, 0.5, 2, 8);
+        bodyGeo.rotateX(Math.PI / 2);
+        const bodyMat = new THREE.MeshStandardMaterial({ color: 0x00ffcc, metalness: 0.8, roughness: 0.2 });
+        const body = new THREE.Mesh(bodyGeo, bodyMat);
+        shipGroup.add(body);
+
+        // Крылья (плоские боксы)
+        const wingGeo = new THREE.BoxGeometry(2, 0.1, 0.8);
+        const wingMat = new THREE.MeshStandardMaterial({ color: 0x008888 });
+        const leftWing = new THREE.Mesh(wingGeo, wingMat);
+        leftWing.position.set(-1, 0, 0.5);
+        leftWing.rotation.z = 0.2;
+        shipGroup.add(leftWing);
+
+        const rightWing = new THREE.Mesh(wingGeo, wingMat);
+        rightWing.position.set(1, 0, 0.5);
+        rightWing.rotation.z = -0.2;
+        shipGroup.add(rightWing);
+
+        // Кабина
+        const cockpitGeo = new THREE.SphereGeometry(0.3, 16, 16);
+        const cockpitMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x444444 });
+        const cockpit = new THREE.Mesh(cockpitGeo, cockpitMat);
+        cockpit.position.set(0, 0.2, -0.3);
+        shipGroup.add(cockpit);
+
+        shipGroup.position.set(0, 0, 0);
+        scene.add(shipGroup);
+
+        // --- МАТЕРИАЛЫ ДЛЯ СКИНОВ ---
+        const skins = {
+            'default': { body: 0x00ffcc, wing: 0x008888, emissive: 0x004433 },
+            'fire': { body: 0xff3300, wing: 0x880000, emissive: 0x550000 },
+            'ice': { body: 0x00aaff, wing: 0x005588, emissive: 0x003355 }
+        };
+
+        function applySkin(skinName) {
+            currentSkin = skinName;
+            localStorage.setItem('currentSkin', skinName);
+            const s = skins[skinName];
+            bodyMat.color.setHex(s.body);
+            bodyMat.emissive.setHex(s.emissive);
+            wingMat.color.setHex(s.wing);
+            updateShopUI();
+        }
+
+        // --- СИСТЕМА ЧАСТИЦ ---
+        const particles = [];
+        function createExplosion(position, color) {
+            const count = 40;
+            const geometry = new THREE.BufferGeometry();
+            const positions = new Float32Array(count * 3);
+            const velocities = [];
+            for (let i = 0; i < count; i++) {
+                positions[i * 3] = position.x;
+                positions[i * 3 + 1] = position.y;
+                positions[i * 3 + 2] = position.z;
+                velocities.push(new THREE.Vector3((Math.random() - 0.5) * 1.5, (Math.random() - 0.5) * 1.5, (Math.random() - 0.5) * 1.5));
+            }
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            const material = new THREE.PointsMaterial({ color: color, size: 0.4, transparent: true, opacity: 1, blending: THREE.AdditiveBlending });
+            const mesh = new THREE.Points(geometry, material);
+            scene.add(mesh);
+            particles.push({ mesh, velocities, life: 1.0 });
+        }
+
+        function updateParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                const pos = p.mesh.geometry.attributes.position.array;
+                for (let j = 0; j < p.velocities.length; j++) {
+                    pos[j * 3] += p.velocities[j].x;
+                    pos[j * 3 + 1] += p.velocities[j].y;
+                    pos[j * 3 + 2] += p.velocities[j].z;
+                }
+                p.mesh.geometry.attributes.position.needsUpdate = true;
+                p.life -= 0.02;
+                p.mesh.material.opacity = p.life;
+                p.mesh.material.size = 0.4 * p.life;
+                if (p.life <= 0) { scene.remove(p.mesh); particles.splice(i, 1); }
+            }
+        }
+
+        // --- ЛАЗЕРЫ ---
+        const lasers = [];
+        const laserGeo = new THREE.CylinderGeometry(0.05, 0.05, 2, 8);
+        laserGeo.rotateX(Math.PI / 2); // Направляем вдоль оси Z
+        const laserMat = new THREE.MeshBasicMaterial({ color: 0xff0000 }); // Ярко-красный
+
+        function shootLaser() {
+            if (gameOver) return;
+            const laser = new THREE.Mesh(laserGeo, laserMat);
+            // Спавним лазер на носу корабля
+            laser.position.set(shipGroup.position.x, shipGroup.position.y, shipGroup.position.z - 1.5);
+            scene.add(laser);
+            lasers.push(laser);
+        }
+
+        // Стрельба по клику мыши или Пробелу
+        window.addEventListener('mousedown', shootLaser);
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'Space') shootLaser();
+            if (e.key === 'w' || e.key === 'W' || e.key === 'ArrowUp') keys.w = true;
+            if (e.key === 's' || e.key === 'S' || e.key === 'ArrowDown') keys.s = true;
+            if (e.key === 'a' || e.key === 'A' || e.key === 'ArrowLeft') keys.a = true;
+            if (e.key === 'd' || e.key === 'D' || e.key === 'ArrowRight') keys.d = true;
+        });
+        window.addEventListener('keyup', (e) => {
+            if (e.key === 'w' || e.key === 'W' || e.key === 'ArrowUp') keys.w = false;
+            if (e.key === 's' || e.key === 'S' || e.key === 'ArrowDown') keys.s = false;
+            if (e.key === 'a' || e.key === 'A' || e.key === 'ArrowLeft') keys.a = false;
+            if (e.key === 'd' || e.key === 'D' || e.key === 'ArrowRight') keys.d = false;
+        });
+
+        const keys = { w: false, a: false, s: false, d: false };
+
+        // --- КРИСТАЛЛЫ И АСТЕРОИДЫ ---
+        const crystals = [];
+        const crystalGeo = new THREE.OctahedronGeometry(0.6);
+        const crystalMat = new THREE.MeshStandardMaterial({ color: 0x00ff00, emissive: 0x004400 });
+        
+        const asteroids = [];
+        const asteroidGeo = new THREE.DodecahedronGeometry(1.2);
+        const asteroidMat = new THREE.MeshStandardMaterial({ color: 0x888888, emissive: 0x222222 });
+
+        // Спавн объектов далеко впереди
+        function spawnObject() {
+            if (Math.random() > 0.3) {
+                // Кристалл
+                const crystal = new THREE.Mesh(crystalGeo, crystalMat);
+                crystal.position.set((Math.random() - 0.5) * 10, (Math.random() - 0.5) * 6, -60);
+                scene.add(crystal);
+                crystals.push(crystal);
+            } else {
+                // Астероид
+                const asteroid = new THREE.Mesh(asteroidGeo, asteroidMat);
+                asteroid.position.set((Math.random() - 0.5) * 10, (Math.random() - 0.5) * 6, -60);
+                scene.add(asteroid);
+                asteroids.push(asteroid);
+            }
+        }
+
+        // --- ЗВЕЗДЫ ---
+        const starsGeo = new THREE.BufferGeometry();
+        const starPos = new Float32Array(3000 * 3);
+        for (let i = 0; i < 3000 * 3; i++) starPos[i] = (Math.random() - 0.5) * 200;
+        starsGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+        const stars = new THREE.Points(starsGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 0.1 }));
+        scene.add(stars);
+
+        let score = 0;
+        let gameOver = false;
+        let speed = 0.4;
+        let timeLeft = 60;
+
+        const timer = setInterval(() => {
+            if (gameOver) return clearInterval(timer);
+            timeLeft--;
+            document.getElementById('time').innerText = timeLeft;
+            if (timeLeft <= 0) endGame("Время вышло!");
+        }, 1000);
+
+        function checkCollisions() {
+            // 1. Столкновение с кристаллами (сбор)
+            for (let i = crystals.length - 1; i >= 0; i--) {
+                if (shipGroup.position.distanceTo(crystals[i].position) < 2.0) {
+                    scene.remove(crystals[i]);
+                    crystals.splice(i, 1);
+                    score++;
+                    totalCrystals++;
+                    localStorage.setItem('totalCrystals', totalCrystals);
+                    document.getElementById('score').innerText = totalCrystals;
+                    createExplosion(shipGroup.position.clone(), 0x00ff00);
+                }
+            }
+
+            // 2. Столкновение с астероидами (смерть)
+            for (let asteroid of asteroids) {
+                if (shipGroup.position.distanceTo(asteroid.position) < 2.0) {
+                    createExplosion(shipGroup.position.clone(), 0xff0000);
+                    endGame("Ты врезался в астероид!");
+                }
+            }
+
+            // 3. Лазеры попадают в кристаллы или астероиды
+            for (let i = lasers.length - 1; i >= 0; i--) {
+                const laser = lasers[i];
+                let laserHit = false;
+
+                // Попадание в кристалл
+                for (let j = crystals.length - 1; j >= 0; j--) {
+                    if (laser.position.distanceTo(crystals[j].position) < 1.5) {
+                        createExplosion(crystals[j].position.clone(), 0x00ff00);
+                        scene.remove(crystals[j]);
+                        crystals.splice(j, 1);
+                        laserHit = true;
+                        score++;
+                        totalCrystals++;
+                        localStorage.setItem('totalCrystals', totalCrystals);
+                        document.getElementById('score').innerText = totalCrystals;
+                    }
+                }
+
+                // Попадание в астероид
+                for (let j = asteroids.length - 1; j >= 0; j--) {
+                    if (laser.position.distanceTo(asteroids[j].position) < 1.5) {
+                        createExplosion(asteroids[j].position.clone(), 0x888888);
+                        scene.remove(asteroids[j]);
+                        asteroids.splice(j, 1);
+                        laserHit = true;
+                    }
+                }
+
+                if (laserHit) {
+                    scene.remove(laser);
+                    lasers.splice(i, 1);
+                }
+            }
+        }
+
+        function endGame(reason) {
+            if (gameOver) return;
+            gameOver = true;
+            clearInterval(timer);
+            document.querySelector('#game-over h1').innerText = reason;
+            document.getElementById('game-over').style.display = 'block';
+            document.getElementById('final-score').innerText = score;
+            document.getElementById('total-score').innerText = totalCrystals;
+        }
+
+        // --- МАГАЗИН ---
+        function toggleShop() {
+            const shop = document.getElementById('shop');
+            shop.style.display = shop.style.display === 'block' ? 'none' : 'block';
+            updateShopUI();
+        }
+        function updateShopUI() {
+            document.getElementById('btn-fire').innerText = localStorage.getItem('skin_fire') ? 'Куплен' : 'Купить';
+            document.getElementById('btn-fire').className = localStorage.getItem('skin_fire') ? 'owned' : '';
+            document.getElementById('btn-ice').innerText = localStorage.getItem('skin_ice') ? 'Куплен' : 'Купить';
+            document.getElementById('btn-ice').className = localStorage.getItem('skin_ice') ? 'owned' : '';
+        }
+        function buySkin(skin, price) {
+            if (localStorage.getItem('skin_' + skin)) { applySkin(skin); return; }
+            if (totalCrystals >= price) {
+                totalCrystals -= price;
+                localStorage.setItem('totalCrystals', totalCrystals);
+                localStorage.setItem('skin_' + skin, 'true');
+                document.getElementById('score').innerText = totalCrystals;
+                applySkin(skin);
+            } else {
+                alert('Недостаточно кристаллов!');
+            }
+            updateShopUI();
+        }
+
+        // --- ГЛАВНЫЙ ЦИКЛ ---
+        let spawnTimer = 0;
+
+        function animate() {
+            if (gameOver) {
+                updateParticles();
+                renderer.render(scene, camera);
+                return;
+            }
+            requestAnimationFrame(animate);
+
+            // Движение корабля
+            if (keys.w) shipGroup.position.y += 0.15;
+            if (keys.s) shipGroup.position.y -= 0.15;
+            if (keys.a) shipGroup.position.x -= 0.15;
+            if (keys.d) shipGroup.position.x += 0.15;
+            
+            // Наклон при повороте
+            if (keys.a) shipGroup.rotation.z = 0.3;
+            else if (keys.d) shipGroup.rotation.z = -0.3;
+            else shipGroup.rotation.z = 0;
+
+            // Ограничиваем полет
+            shipGroup.position.x = Math.max(-8, Math.min(8, shipGroup.position.x));
+            shipGroup.position.y = Math.max(-4, Math.min(4, shipGroup.position.y));
+
+            // Двигаем лазеры вперед
+            for (let i = lasers.length - 1; i >= 0; i--) {
+                lasers[i].position.z -= 1.5; // Летят вперед
+                if (lasers[i].position.z < -100) { // Удаляем, если улетели
+                    scene.remove(lasers[i]);
+                    lasers.splice(i, 1);
+                }
+            }
+
+            // Двигаем кристаллы и астероиды на нас
+            crystals.forEach(c => {
+                c.position.z += speed;
+                c.rotation.x += 0.02;
+                c.rotation.y += 0.02;
+                if (c.position.z > 10) { // Пролетел мимо
+                    scene.remove(c);
+                    crystals.splice(crystals.indexOf(c), 1);
+                }
+            });
+
+            asteroids.forEach(a => {
+                a.position.z += speed * 1.2; // Астероиды быстрее
+                a.rotation.x += 0.01;
+                if (a.position.z > 10) {
+                    scene.remove(a);
+                    asteroids.splice(asteroids.indexOf(a), 1);
+                }
+            });
+
+            // Спавн новых объектов (каждые 30 кадров)
+            spawnTimer++;
+            if (spawnTimer > 30) {
+                spawnObject();
+                spawnTimer = 0;
+            }
+
+            // Вращение звезд
+            stars.rotation.z += 0.001;
+
+            updateParticles();
+            checkCollisions();
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        applySkin(currentSkin);
+        animate();
+    </script>
+</body>
+</html>
